@@ -1,4 +1,4 @@
-FROM node:16-slim
+FROM nikolaik/python-nodejs:python3.10-nodejs16-slim
 
 # Set working directory
 WORKDIR /app
@@ -7,11 +7,10 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install
 
-# Install Python 3.8+ and other dependencies
+# Install ffmpeg and yt-dlp with necessary dependencies for Instagram
 RUN apt-get update && \
-    apt-get install -y curl ffmpeg python3-pip && \
-    pip3 install --upgrade pip && \
-    pip3 install --no-cache-dir yt-dlp && \
+    apt-get install -y ffmpeg git && \
+    pip3 install --no-cache-dir yt-dlp requests beautifulsoup4 && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
