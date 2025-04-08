@@ -7,10 +7,10 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install
 
-# Install ffmpeg and yt-dlp with necessary dependencies for Instagram
+# Install ffmpeg, yt-dlp, and instaloader with necessary dependencies for Instagram
 RUN apt-get update && \
     apt-get install -y ffmpeg git && \
-    pip3 install --no-cache-dir yt-dlp requests beautifulsoup4 && \
+    pip3 install --no-cache-dir yt-dlp requests beautifulsoup4 instaloader && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
