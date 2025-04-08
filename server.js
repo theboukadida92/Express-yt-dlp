@@ -1,7 +1,8 @@
 const express = require('express');
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 
 // Initialize Express app
 const app = express();
@@ -9,6 +10,12 @@ const port = process.env.PORT || 8080;
 
 // Middleware to parse JSON bodies
 app.use(express.json());
+
+// Create temp directory if it doesn't exist
+const tempDir = path.join(os.tmpdir(), 'yt-dlp-videos');
+if (!fs.existsSync(tempDir)) {
+  fs.mkdirSync(tempDir, { recursive: true });
+}
 
 // Basic route for testing
 app.get('/', (req, res) => {
@@ -26,31 +33,92 @@ app.post('/download', async (req, res) => {
     
     console.log(`Processing URL: ${url}`);
     
-    // Create a unique filename
-    const outputFile = path.join(__dirname, 'tmp', 'videos', `video-${Date.now()}.mp4`);
+    // Create a unique filename in the system temp directory
+    const outputFile = path.join(tempDir, `video-${Date.now()}.mp4`);
+    console.log(`Output file: ${outputFile}`);
     
-    // Special handling for Instagram
-    let ytDlpOptions = [];
-    if (url.includes('instagram.com')) {
-      console.log('Instagram URL detected, using special options');
-      ytDlpOptions = [
-        '--no-warnings',
-        '--no-check-certificate',
-        '--format', 'best',
-        '--extract-audio',
-        '--no-call-home',
-        '--geo-bypass',
-        '--add-header', 'User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.82 Safari/537.36',
-        '--add-header', 'Accept:text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        '--add-header', 'Accept-Language:en-US,en;q=0.5',
-        '--add-header', 'Accept-Charset:ISO-8859-1,utf-8;q=0.7,*;q=0.7',
-        '--add-header', 'Origin:https://www.instagram.com',
-        '--add-header', 'Referer:https://www.instagram.com/',
-        '-o', outputFile
-      ];
-    } else {
-      ytDlpOptions = ['-o', outputFile];
+    // Check if yt-dlp is available
+    try {
+      const version = execSync('yt-dlp --version').toString().trim();
+      console.log(`yt-dlp version: ${version}`);
+    } catch (error) {
+      console.error('yt-dlp not found:', error);
+      return res.status(500).json({ success: false, error: 'yt-dlp not installed properly' });
     }
+    
+    // For Instagram specifically
+    if (url.includes('instagram.com')) {
+      console.log('Instagram URL detected, using instaloader as fallback');
+      try {
+        // Try to install instaloader if not already installed
+        execSync('pip3 install instaloader');
+        
+        // Extract the shortcode from the URL
+        const urlObj = new URL(url);
+        const pathParts = urlObj.pathname.split('/').filter(Boolean);
+        const shortcode = pathParts[1]; // Assuming URL format like /reel/SHORTCODE/
+        
+        if (!shortcode) {
+          return res.status(400).json({ success: false, error: 'Could not extract Instagram shortcode' });
+        }
+        
+        console.log(`Extracted shortcode: ${shortcode}`);
+        
+        // Use instaloader to download the post
+        const instaCmd = `instaloader --login=your_username --password=your_password --filename-pattern=${outputFile} -- -${shortcode}`;
+        execSync(instaCmd);
+        
+        // Check if file exists
+        if (fs.existsSync(outputFile)) {
+          return res.sendFile(outputFile, (err) => {
+            if (err) {
+              console.error('Error sending file:', err);
+            }
+            // Delete file after sending
+            fs.unlink(outputFile, (unlinkErr) => {
+              if (unlinkErr) console.error('Error deleting file:', unlinkErr);
+            });
+          });
+        }
+      } catch (error) {
+        console.error('Instaloader error:', error);
+        // Fall back to yt-dlp if instaloader fails
+      }
+    }
+    
+    // Try yt-dlp with debug info
+    console.log('Attempting download with yt-dlp...');
+    
+    // Output debug info to see what's happening
+    const debugOptions = [
+      '--verbose',
+      '--dump-json',
+      url
+    ];
+    
+    try {
+      const debugInfo = execSync(`yt-dlp ${debugOptions.join(' ')}`).toString();
+      console.log('Debug info:', debugInfo);
+    } catch (error) {
+      console.error('yt-dlp debug error:', error.message);
+    }
+    
+    // Try with more options for Instagram
+    const ytDlpOptions = [
+      '--verbose',
+      '--no-warnings',
+      '--ignore-errors',
+      '--no-check-certificate',
+      '--prefer-insecure',
+      '--format', 'best',
+      '--force-overwrites',
+      '--no-call-home',
+      '--geo-bypass',
+      '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36',
+      '--referer', 'https://www.instagram.com/',
+      '--cookies-from-browser', 'chrome',
+      '-o', outputFile
+    ];
     
     // Execute yt-dlp
     const ytDlpProcess = spawn('yt-dlp', [...ytDlpOptions, url]);
@@ -61,24 +129,37 @@ app.post('/download', async (req, res) => {
       console.log(`yt-dlp stderr: ${data}`);
     });
     
+    let stdout = '';
     ytDlpProcess.stdout.on('data', (data) => {
+      stdout += data.toString();
       console.log(`yt-dlp stdout: ${data}`);
     });
     
     ytDlpProcess.on('close', (code) => {
+      console.log(`yt-dlp process exited with code ${code}`);
+      console.log(`Checking if file exists at ${outputFile}`);
+      
       if (code !== 0) {
-        console.error(`yt-dlp process exited with code ${code}`);
-        return res.status(500).json({ success: false, error: `Process exited with code ${code}`, stderr });
+        return res.status(500).json({ 
+          success: false, 
+          error: `Process exited with code ${code}`, 
+          stderr,
+          stdout
+        });
       }
       
       // Check if file exists
       if (!fs.existsSync(outputFile)) {
+        console.error('File not found after download');
         return res.status(500).json({ 
           success: false, 
           error: 'File was not downloaded properly',
-          stderr
+          stderr,
+          stdout
         });
       }
+      
+      console.log(`File exists, size: ${fs.statSync(outputFile).size} bytes`);
       
       // Send file
       res.sendFile(outputFile, (err) => {
@@ -100,4 +181,5 @@ app.post('/download', async (req, res) => {
 // Start the server
 app.listen(port, () => {
   console.log(`Server listening on port ${port}`);
+  console.log(`Temporary directory: ${tempDir}`);
 });
