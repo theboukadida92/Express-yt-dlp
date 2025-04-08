@@ -1,3 +1,21 @@
+const express = require('express');
+const { spawn } = require('child_process');
+const path = require('path');
+const fs = require('fs');
+
+// Initialize Express app
+const app = express();
+const port = process.env.PORT || 8080;
+
+// Middleware to parse JSON bodies
+app.use(express.json());
+
+// Basic route for testing
+app.get('/', (req, res) => {
+  res.send('yt-dlp API is running');
+});
+
+// Download endpoint
 app.post('/download', async (req, res) => {
   try {
     const { url } = req.body;
@@ -18,6 +36,8 @@ app.post('/download', async (req, res) => {
       ytDlpOptions = [
         '--no-warnings',
         '--no-check-certificate',
+        '--format', 'best',
+        '--extract-audio',
         '--no-call-home',
         '--geo-bypass',
         '--add-header', 'User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.82 Safari/537.36',
@@ -75,4 +95,9 @@ app.post('/download', async (req, res) => {
     console.error('Error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
+});
+
+// Start the server
+app.listen(port, () => {
+  console.log(`Server listening on port ${port}`);
 });
